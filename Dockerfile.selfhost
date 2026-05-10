@@ -1,0 +1,73 @@
+# Patched Dockerfile for self-hosted Contexto
+# Fixes: per-workspace lockfiles (now root-only), node 22, pnpm v10, native builds
+
+# ---------- build base ----------
+FROM node:22 AS build-base
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/contexto/package.json ./packages/contexto/
+COPY packages/memory/package.json ./packages/memory/
+COPY packages/mindmap/package.json ./packages/mindmap/
+COPY packages/openrouter/package.json ./packages/openrouter/
+COPY packages/ui/dashboard/package.json ./packages/ui/dashboard/
+
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate && pnpm install
+
+COPY . .
+
+# ---------- dashboard build ----------
+FROM build-base AS dashboard-build
+WORKDIR /app/packages/ui/dashboard
+ARG NEXT_PUBLIC_API_BASE_URL=__API_URL_PLACEHOLDER__
+ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
+RUN pnpm run build
+
+# ---------- memory build ----------
+FROM build-base AS memory-build
+WORKDIR /app/packages/memory
+RUN pnpm run build
+
+# ---------- openrouter build ----------
+FROM build-base AS openrouter-build
+WORKDIR /app/packages/memory
+RUN pnpm run build
+WORKDIR /app/packages/openrouter
+RUN pnpm run build
+
+# ---------- fullstack runtime ----------
+FROM node:22-slim AS ekai-gateway-runtime
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends bash python3 make g++ && rm -rf /var/lib/apt/lists/*
+
+# Dashboard
+COPY --from=dashboard-build /app/packages/ui/dashboard/.next ./packages/ui/dashboard/.next
+COPY --from=dashboard-build /app/packages/ui/dashboard/public ./packages/ui/dashboard/public
+COPY --from=dashboard-build /app/packages/ui/dashboard/next.config.mjs ./packages/ui/dashboard/next.config.mjs
+COPY --from=dashboard-build /app/packages/ui/dashboard/package.json ./packages/ui/dashboard/package.json
+COPY --from=build-base /app/package.json ./
+COPY --from=build-base /app/pnpm-lock.yaml ./
+COPY --from=build-base /app/pnpm-workspace.yaml ./
+COPY --from=build-base /app/packages/contexto/package.json ./packages/contexto/
+COPY --from=build-base /app/packages/memory/package.json ./packages/memory/
+COPY --from=build-base /app/packages/openrouter/package.json ./packages/openrouter/
+
+# Install prod deps (native builds will run since we have build tools)
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate && pnpm install --prod
+
+# Copy built dist
+COPY --from=memory-build /app/packages/memory/dist ./packages/memory/dist
+COPY --from=openrouter-build /app/packages/openrouter/dist ./packages/openrouter/dist
+
+RUN mkdir -p /app/packages/memory/data
+
+# Entrypoint
+COPY scripts/start-docker-fullstack.sh /app/start-docker-fullstack.sh
+RUN chmod +x /app/start-docker-fullstack.sh
+
+ENV NODE_ENV=production
+
+EXPOSE 3000 4010
+VOLUME ["/app/packages/memory/data"]
+CMD ["/app/start-docker-fullstack.sh"]
