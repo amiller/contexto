@@ -36,9 +36,11 @@ def _raise_with_body(resp: httpx.Response) -> None:
 class ContextoClient:
     """Client for the self-hosted Contexto memory API."""
 
-    def __init__(self, base_url: str = DEFAULT_BASE, timeout: float = 120.0):
-        # Default 120s: /v1/ingest runs LLM extraction + embeddings server-side,
-        # which can take ~10-60s on Gemini Flash for a long hermes turn.
+    def __init__(self, base_url: str = DEFAULT_BASE, timeout: float = 300.0):
+        # Default 300s: /v1/ingest runs LLM extraction + embeddings server-side.
+        # Empirical: ~48s for a 4K-char hermes turn; ~120-180s for the long-tail
+        # outliers (longer turns + a slow Gemini response). 300s catches the
+        # 99th percentile without papering over a real hang.
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.headers = {"Content-Type": "application/json"}

@@ -69,9 +69,11 @@ def test_default_base_is_localhost():
     assert DEFAULT_BASE == "http://localhost:4010"
 
 
-def test_default_timeout_is_120s():
-    """Ingest runs server-side LLM extraction; needs more than the httpx default."""
-    assert ContextoClient().timeout == 120.0
+def test_default_timeout_is_generous():
+    """Ingest runs server-side LLM extraction (Gemini ~10-180s depending on
+    turn size). Default httpx timeout (5s) and even a 120s ceiling miss the
+    long tail. 300s catches the 99th percentile."""
+    assert ContextoClient().timeout >= 300.0
 
 
 def test_base_url_trailing_slash_stripped():
